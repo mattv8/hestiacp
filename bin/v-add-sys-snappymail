@@ -54,6 +54,11 @@ if [ -z "$HOMEDIR" ] || [ -z "$HESTIA_INSTALL_DIR" ]; then
 	exit 2
 fi
 
+# Set default BACKEND_PORT if not defined
+if [ -z "$BACKEND_PORT" ]; then
+	BACKEND_PORT="8083"
+fi
+
 if [ -z "$(echo "$DB_SYSTEM" | grep -w 'mysql')" ]; then
 	echo "ERROR: Mysql not available. Installation aborted"
 	exit 2
@@ -78,19 +83,44 @@ check_hestia_demo_mode
 #----------------------------------------------------------#
 
 if [ "$UPDATE" == "no" ]; then
+	echo "Starting SnappyMail installation..."
+	
+	# Clean previous installation
 	rm -f -r $SM_INSTALL_DIR
 	rm -f -r $SM_CONFIG_DIR
 
-	mkdir $SM_INSTALL_DIR
-	mkdir $SM_CONFIG_DIR
+	# Create installation directories
+	mkdir -p $SM_INSTALL_DIR
+	mkdir -p $SM_CONFIG_DIR
+	
+	# Validate critical paths exist
+	if [ ! -d "$HESTIA_COMMON_DIR" ]; then
+		echo "ERROR: HESTIA_COMMON_DIR ($HESTIA_COMMON_DIR) does not exist"
+		exit 2
+	fi
+	
+	if [ ! -f "$HESTIA_COMMON_DIR/snappymail/install.php" ]; then
+		echo "ERROR: SnappyMail install.php not found at $HESTIA_COMMON_DIR/snappymail/install.php"
+		exit 2
+	fi
 
 	cd "$SM_INSTALL_DIR"
-	[ ! -f "${SM_INSTALL_DIR}/${SM_FILE}" ] && wget "$SM_URL" --retry-connrefused --quiet -O "${SM_INSTALL_DIR}/${SM_FILE}"
+	
+	# Download SnappyMail with timeout to prevent hanging
+	if [ ! -f "${SM_INSTALL_DIR}/${SM_FILE}" ]; then
+		echo "Downloading SnappyMail from $SM_URL..."
+		if ! wget "$SM_URL" --retry-connrefused --timeout=30 --tries=3 -O "${SM_INSTALL_DIR}/${SM_FILE}"; then
+			echo "ERROR: Download failed, installation aborted."
+			exit 2
+		fi
+	fi
 
 	if [ ! -f "${SM_INSTALL_DIR}/${SM_FILE}" ]; then
 		echo "ERROR: Download failed, installation aborted."
 		exit 2
 	fi
+	
+	echo "SnappyMail downloaded successfully"
 
 	key=$(openssl rand -hex 4)
 	suffix=$(openssl rand -hex 4)
@@ -125,7 +155,21 @@ if [ "$UPDATE" == "no" ]; then
 	fi
 	# Temporarily set the permissions to www-data
 	chown -R www-data:www-data $SM_CONFIG_DIR/
-	php -f $HESTIA_COMMON_DIR/snappymail/install.php "admin_$key" "admin_$suffix" "$admin_password" "$r" "$BACKEND_PORT"
+	
+	# Debug output for troubleshooting
+	echo "Configuring SnappyMail with the following parameters:"
+	echo "  Admin user: admin_$key"
+	echo "  Admin panel key: admin_$suffix"
+	echo "  Backend port: $BACKEND_PORT"
+	echo "  Install script: $HESTIA_COMMON_DIR/snappymail/install.php"
+	
+	# Execute the PHP configuration script
+	if ! php -f $HESTIA_COMMON_DIR/snappymail/install.php "admin_$key" "admin_$suffix" "$admin_password" "$r" "$BACKEND_PORT"; then
+		echo "ERROR: SnappyMail configuration failed"
+		exit 2
+	fi
+	
+	echo "SnappyMail configuration completed successfully"
 
 	# Set the permissions back to hestiamail
 	chown -R hestiamail:www-data $SM_CONFIG_DIR/
@@ -150,7 +194,17 @@ if [ "$UPDATE" == "no" ]; then
 	fi
 
 else
-	[ ! -f "${SM_INSTALL_DIR}/${SM_FILE}" ] && wget "$SM_URL" --quiet -O "${SM_INSTALL_DIR}/${SM_FILE}"
+	echo "Updating SnappyMail..."
+	
+	# Download update with timeout to prevent hanging
+	if [ ! -f "${SM_INSTALL_DIR}/${SM_FILE}" ]; then
+		echo "Downloading SnappyMail update from $SM_URL..."
+		if ! wget "$SM_URL" --timeout=30 --tries=3 -O "${SM_INSTALL_DIR}/${SM_FILE}"; then
+			echo "ERROR: Download failed, installation aborted."
+			exit 2
+		fi
+	fi
+	
 	if [ ! -f "${SM_INSTALL_DIR}/${SM_FILE}" ]; then
 		echo "ERROR: Download failed, installation aborted."
 		exit 2
